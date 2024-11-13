@@ -25,31 +25,52 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget xvfb
+          sudo apt-get install -y wine wine32 wget xvfb x11-utils
 
       - name: Setup Wine environment
         run: |
-          # Set Wine environment variables
+          # Kill any existing Xvfb processes
+          sudo pkill Xvfb || true
+          sleep 2
+          
+          # Find an available display number
+          DISPLAY_NUM=99
+          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
+            DISPLAY_NUM=$((DISPLAY_NUM+1))
+          done
+          echo "DISPLAY_NUM=${DISPLAY_NUM}" >> $GITHUB_ENV
+          
+          # Start Xvfb with specific display
+          /usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1024x768x16 &
+          sleep 5
+          
+          # Set environment variables
+          echo "DISPLAY=:${DISPLAY_NUM}" >> $GITHUB_ENV
           echo "WINEDEBUG=-all" >> $GITHUB_ENV
           echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
-          # Create config directory
-          mkdir -p ~/.wine
-          # Start virtual display
-          Xvfb :0 -screen 0 1024x768x16 &
-          echo "DISPLAY=:0.0" >> $GITHUB_ENV
 
-      - name: Download and Install Windows Python
+      - name: Download Windows Python
         run: |
           wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
-          # Install with virtual display
-          xvfb-run wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
+
+      - name: Install Windows Python
+        run: |
+          # Verify display is working
+          xdpyinfo -display :${DISPLAY_NUM} >/dev/null || (echo "Display :${DISPLAY_NUM} is not running"; exit 1)
+          
+          # Install Python using xvfb-run
+          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
+          wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
           sleep 30
 
       - name: Install MT5 in Windows Python
         run: |
-          # Use virtual display for pip commands
-          xvfb-run wine python -m pip install --upgrade pip
-          xvfb-run wine python -m pip install MetaTrader5==5.0.45
+          # Install using xvfb-run
+          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
+          wine python -m pip install --upgrade pip
+          
+          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
+          wine python -m pip install MetaTrader5==5.0.45
 
       - name: Create and start virtual environment
         run: |
@@ -66,14 +87,24 @@ jobs:
           cat > startup.sh << 'EOL'
           #!/bin/bash
           
-          # Set up Wine environment
+          # Kill any existing Xvfb
+          pkill Xvfb || true
+          sleep 2
+          
+          # Find available display
+          DISPLAY_NUM=99
+          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
+            DISPLAY_NUM=$((DISPLAY_NUM+1))
+          done
+          
+          # Start Xvfb
+          /usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1024x768x16 &
+          sleep 5
+          
+          # Export variables
+          export DISPLAY=:${DISPLAY_NUM}
           export WINEDEBUG=-all
           export WINEDLLOVERRIDES=mscoree,mshtml=
-          export DISPLAY=:0.0
-          
-          # Start virtual display
-          Xvfb :0 -screen 0 1024x768x16 &
-          sleep 2
           
           # Start the application
           exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
