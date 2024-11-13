@@ -25,31 +25,39 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget xvfb
+          sudo apt-get install -y wine wine32 wget xvfb x11-utils
 
       - name: Setup Wine environment variables
         run: |
           echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
-          echo "DISPLAY=:99.0" >> $GITHUB_ENV
           echo "WINEDEBUG=-all" >> $GITHUB_ENV
 
-      - name: Start Xvfb
+      - name: Find available display
         run: |
-          Xvfb :99 -screen 0 1024x768x16 &
-          sleep 2  # Give Xvfb time to start
+          DISPLAY_NUM=99
+          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
+            DISPLAY_NUM=$((DISPLAY_NUM+1))
+          done
+          echo "DISPLAY_NUM=${DISPLAY_NUM}" >> $GITHUB_ENV
+          echo "DISPLAY=:${DISPLAY_NUM}.0" >> $GITHUB_ENV
 
       - name: Setup Wine Python environment
         run: |
-          wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
-          xvfb-run wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
-          sleep 30  # Wait for installation to complete
+          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
+          sleep 30
 
       - name: Install MT5 in Wine Python
         run: |
-          xvfb-run wine python -m pip install --upgrade pip
-          xvfb-run wine python -m pip install MetaTrader5
+          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          wine python -m pip install --upgrade pip
+          
+          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          wine python -m pip install MetaTrader5
+          
           # Verify MT5 installation
-          xvfb-run wine python -c "import MetaTrader5"
+          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          wine python -c "import MetaTrader5"
 
       - name: Create and start virtual environment
         run: |
@@ -64,11 +72,25 @@ jobs:
 
       - name: Create startup script
         run: |
-          echo '#!/bin/bash
-          export DISPLAY=:99.0
-          Xvfb :99 -screen 0 1024x768x16 &
-          sleep 2
-          gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app' > startup.sh
+          cat > startup.sh << 'EOL'
+          #!/bin/bash
+          
+          # Find available display number
+          DISPLAY_NUM=99
+          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
+            DISPLAY_NUM=$((DISPLAY_NUM+1))
+          done
+          
+          # Export display and Wine settings
+          export DISPLAY=:${DISPLAY_NUM}.0
+          export WINEDEBUG=-all
+          export WINEDLLOVERRIDES=mscoree,mshtml=
+          
+          # Start Xvfb with specific configuration
+          /usr/bin/xvfb-run --server-num=${DISPLAY_NUM} \
+            --server-args="-screen 0 1024x768x16" \
+            gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
+          EOL
           chmod +x startup.sh
 
       - name: Zip artifact for deployment
