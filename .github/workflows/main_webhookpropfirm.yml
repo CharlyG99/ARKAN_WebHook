@@ -25,29 +25,18 @@ jobs:
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget xvfb x11-utils
+          sudo apt-get install -y wine wine32 wget xvfb
 
-      - name: Setup Wine environment
+      - name: Setup Display and Wine
         run: |
-          # Kill any existing Xvfb processes
-          sudo pkill Xvfb || true
-          sleep 2
-          
-          # Find an available display number
-          DISPLAY_NUM=99
-          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
-            DISPLAY_NUM=$((DISPLAY_NUM+1))
-          done
-          echo "DISPLAY_NUM=${DISPLAY_NUM}" >> $GITHUB_ENV
-          
-          # Start Xvfb with specific display
-          /usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1024x768x16 &
-          sleep 5
-          
-          # Set environment variables
-          echo "DISPLAY=:${DISPLAY_NUM}" >> $GITHUB_ENV
+          # Start Xvfb
+          sudo rm -rf /tmp/.X*
+          sudo rm -rf /tmp/.x*
+          Xvfb :99 -ac -screen 0 1024x768x16 &
+          echo "DISPLAY=:99.0" >> $GITHUB_ENV
           echo "WINEDEBUG=-all" >> $GITHUB_ENV
           echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
+          sleep 3
 
       - name: Download Windows Python
         run: |
@@ -55,21 +44,14 @@ jobs:
 
       - name: Install Windows Python
         run: |
-          # Verify display is working
-          xdpyinfo -display :${DISPLAY_NUM} >/dev/null || (echo "Display :${DISPLAY_NUM} is not running"; exit 1)
-          
-          # Install Python using xvfb-run
-          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
+          export DISPLAY=:99.0
           wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
           sleep 30
 
       - name: Install MT5 in Windows Python
         run: |
-          # Install using xvfb-run
-          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
+          export DISPLAY=:99.0
           wine python -m pip install --upgrade pip
-          
-          xvfb-run --server-num=${DISPLAY_NUM} --server-args="-screen 0 1024x768x16" \
           wine python -m pip install MetaTrader5==5.0.45
 
       - name: Create and start virtual environment
@@ -87,22 +69,16 @@ jobs:
           cat > startup.sh << 'EOL'
           #!/bin/bash
           
-          # Kill any existing Xvfb
-          pkill Xvfb || true
-          sleep 2
-          
-          # Find available display
-          DISPLAY_NUM=99
-          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
-            DISPLAY_NUM=$((DISPLAY_NUM+1))
-          done
+          # Clean up any existing X server files
+          sudo rm -rf /tmp/.X*
+          sudo rm -rf /tmp/.x*
           
           # Start Xvfb
-          /usr/bin/Xvfb :${DISPLAY_NUM} -screen 0 1024x768x16 &
-          sleep 5
+          Xvfb :99 -ac -screen 0 1024x768x16 &
+          sleep 3
           
-          # Export variables
-          export DISPLAY=:${DISPLAY_NUM}
+          # Set environment variables
+          export DISPLAY=:99.0
           export WINEDEBUG=-all
           export WINEDLLOVERRIDES=mscoree,mshtml=
           
