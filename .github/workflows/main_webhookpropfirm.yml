@@ -21,36 +21,30 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Wine and Xvfb
+      - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget xvfb
+          sudo apt-get install -y wine wine32 wget
 
-      - name: Setup Display and Wine
+      - name: Setup virtual display
+        uses: pyvista/setup-headless-display-action@v1
+
+      - name: Setup Wine environment
         run: |
-          # Start Xvfb
-          sudo rm -rf /tmp/.X*
-          sudo rm -rf /tmp/.x*
-          Xvfb :99 -ac -screen 0 1024x768x16 &
-          echo "DISPLAY=:99.0" >> $GITHUB_ENV
           echo "WINEDEBUG=-all" >> $GITHUB_ENV
           echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
-          sleep 3
+          wine wineboot --init
+          sleep 10
 
-      - name: Download Windows Python
+      - name: Download and Install Windows Python
         run: |
           wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
-
-      - name: Install Windows Python
-        run: |
-          export DISPLAY=:99.0
           wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
           sleep 30
 
       - name: Install MT5 in Windows Python
         run: |
-          export DISPLAY=:99.0
           wine python -m pip install --upgrade pip
           wine python -m pip install MetaTrader5==5.0.45
 
@@ -69,18 +63,18 @@ jobs:
           cat > startup.sh << 'EOL'
           #!/bin/bash
           
-          # Clean up any existing X server files
-          sudo rm -rf /tmp/.X*
-          sudo rm -rf /tmp/.x*
-          
-          # Start Xvfb
-          Xvfb :99 -ac -screen 0 1024x768x16 &
-          sleep 3
-          
           # Set environment variables
-          export DISPLAY=:99.0
           export WINEDEBUG=-all
           export WINEDLLOVERRIDES=mscoree,mshtml=
+          
+          # Initialize virtual display
+          Xvfb :99 -screen 0 1024x768x16 &
+          export DISPLAY=:99.0
+          sleep 3
+          
+          # Initialize Wine
+          wine wineboot --init
+          sleep 5
           
           # Start the application
           exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
