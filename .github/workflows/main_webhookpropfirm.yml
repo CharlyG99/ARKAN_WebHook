@@ -2,7 +2,7 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python app to Azure Web App - webhookpropfirm
+name: Build and deploy Python app to Azure Web App
 
 on:
   push:
@@ -21,22 +21,36 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Wine and dependencies
+      - name: Install Wine and Xvfb
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget
-          
+          sudo apt-get install -y wine wine32 wget xvfb
+
+      - name: Setup Wine environment variables
+        run: |
+          echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
+          echo "DISPLAY=:99.0" >> $GITHUB_ENV
+          echo "WINEDEBUG=-all" >> $GITHUB_ENV
+
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 1024x768x16 &
+          sleep 2  # Give Xvfb time to start
+
       - name: Setup Wine Python environment
         run: |
           wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
-          wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
-          
+          xvfb-run wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
+          sleep 30  # Wait for installation to complete
+
       - name: Install MT5 in Wine Python
         run: |
-          wine python -m pip install --upgrade pip
-          wine python -m pip install MetaTrader5
-          
+          xvfb-run wine python -m pip install --upgrade pip
+          xvfb-run wine python -m pip install MetaTrader5
+          # Verify MT5 installation
+          xvfb-run wine python -c "import MetaTrader5"
+
       - name: Create and start virtual environment
         run: |
           python -m venv venv
@@ -48,18 +62,32 @@ jobs:
           pip install wheel setuptools
           pip install -r requirements.txt
 
+      - name: Create startup script
+        run: |
+          echo '#!/bin/bash
+          export DISPLAY=:99.0
+          Xvfb :99 -screen 0 1024x768x16 &
+          sleep 2
+          gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app' > startup.sh
+          chmod +x startup.sh
+
       - name: Zip artifact for deployment
         run: |
-          zip release.zip ./* -r
-          zip -r release.zip .wine/drive_c/users/runner/Local\ Settings/Application\ Data/Programs/Python/Python38/Lib/site-packages/MetaTrader5/
-          
+          mkdir staging
+          # Copy application files
+          cp -r *.py *.txt startup.sh staging/
+          # Copy MT5 files from Wine
+          mkdir -p staging/wine_mt5
+          cp -r ~/.wine/drive_c/users/*/Local\ Settings/Application\ Data/Programs/Python/Python38/Lib/site-packages/MetaTrader5 staging/wine_mt5/
+          # Create the final zip
+          cd staging
+          zip -r ../release.zip ./*
+
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v3
         with:
           name: python-app
-          path: |
-            release.zip
-            !venv/
+          path: release.zip
 
   deploy:
     runs-on: ubuntu-latest
@@ -75,7 +103,9 @@ jobs:
           name: python-app
 
       - name: Unzip artifact for deployment
-        run: unzip release.zip
+        run: |
+          unzip release.zip
+          rm release.zip
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v2
