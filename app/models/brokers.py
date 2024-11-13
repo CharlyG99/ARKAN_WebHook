@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from mt5linux import MetaTrader5 as mt5
+import MetaTrader5 as mt5
 import logging
 from datetime import datetime, timedelta
 from pydantic import BaseModel
