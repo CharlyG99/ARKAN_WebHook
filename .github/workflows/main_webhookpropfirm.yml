@@ -21,43 +21,26 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Wine and Xvfb
+      - name: Install Wine
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget xvfb x11-utils
+          sudo apt-get install -y wine wine32 wget
 
-      - name: Setup Wine environment variables
+      - name: Download and Install Windows Python
         run: |
-          echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
-          echo "WINEDEBUG=-all" >> $GITHUB_ENV
-
-      - name: Find available display
-        run: |
-          DISPLAY_NUM=99
-          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
-            DISPLAY_NUM=$((DISPLAY_NUM+1))
-          done
-          echo "DISPLAY_NUM=${DISPLAY_NUM}" >> $GITHUB_ENV
-          echo "DISPLAY=:${DISPLAY_NUM}.0" >> $GITHUB_ENV
-
-      - name: Setup Wine Python environment
-        run: |
-          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          # Download Python for Windows
+          wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
+          
+          # Install Python in Wine
           wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
           sleep 30
 
-      - name: Install MT5 in Wine Python
+      - name: Install MT5 in Windows Python
         run: |
-          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
+          # Install MetaTrader5 in Windows Python
           wine python -m pip install --upgrade pip
-          
-          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
           wine python -m pip install MetaTrader5
-          
-          # Verify MT5 installation
-          xvfb-run --server-num=$DISPLAY_NUM --server-args="-screen 0 1024x768x16" \
-          wine python -c "import MetaTrader5"
 
       - name: Create and start virtual environment
         run: |
@@ -67,41 +50,32 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install wheel setuptools
           pip install -r requirements.txt
+          pip install mt5linux
 
       - name: Create startup script
         run: |
           cat > startup.sh << 'EOL'
           #!/bin/bash
           
-          # Find available display number
-          DISPLAY_NUM=99
-          while [ -e "/tmp/.X${DISPLAY_NUM}-lock" ]; do
-            DISPLAY_NUM=$((DISPLAY_NUM+1))
-          done
+          # Start MT5 server
+          python -m mt5linux "/home/site/wwwroot/.wine/drive_c/users/root/Local Settings/Application Data/Programs/Python/Python38/python.exe" &
           
-          # Export display and Wine settings
-          export DISPLAY=:${DISPLAY_NUM}.0
-          export WINEDEBUG=-all
-          export WINEDLLOVERRIDES=mscoree,mshtml=
+          # Wait for server to start
+          sleep 5
           
-          # Start Xvfb with specific configuration
-          /usr/bin/xvfb-run --server-num=${DISPLAY_NUM} \
-            --server-args="-screen 0 1024x768x16" \
-            gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
+          # Start the application
+          exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
           EOL
           chmod +x startup.sh
 
       - name: Zip artifact for deployment
         run: |
           mkdir staging
-          # Copy application files
           cp -r *.py *.txt startup.sh staging/
-          # Copy MT5 files from Wine
-          mkdir -p staging/wine_mt5
-          cp -r ~/.wine/drive_c/users/*/Local\ Settings/Application\ Data/Programs/Python/Python38/Lib/site-packages/MetaTrader5 staging/wine_mt5/
-          # Create the final zip
+          # Copy Wine Python and MT5
+          mkdir -p staging/.wine
+          cp -r ~/.wine/* staging/.wine/
           cd staging
           zip -r ../release.zip ./*
 
@@ -127,7 +101,6 @@ jobs:
       - name: Unzip artifact for deployment
         run: |
           unzip release.zip
-          rm release.zip
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v2
