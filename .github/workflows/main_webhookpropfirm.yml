@@ -21,26 +21,35 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Wine
+      - name: Install Wine and Xvfb
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y wine wine32 wget
+          sudo apt-get install -y wine wine32 wget xvfb
+
+      - name: Setup Wine environment
+        run: |
+          # Set Wine environment variables
+          echo "WINEDEBUG=-all" >> $GITHUB_ENV
+          echo "WINEDLLOVERRIDES=mscoree,mshtml=" >> $GITHUB_ENV
+          # Create config directory
+          mkdir -p ~/.wine
+          # Start virtual display
+          Xvfb :0 -screen 0 1024x768x16 &
+          echo "DISPLAY=:0.0" >> $GITHUB_ENV
 
       - name: Download and Install Windows Python
         run: |
-          # Download Python for Windows
           wget https://www.python.org/ftp/python/3.8.0/python-3.8.0-amd64.exe --no-check-certificate
-          
-          # Install Python in Wine
-          wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
+          # Install with virtual display
+          xvfb-run wine python-3.8.0-amd64.exe /quiet InstallAllUsers=1 PrependPath=1
           sleep 30
 
       - name: Install MT5 in Windows Python
         run: |
-          # Install MetaTrader5 in Windows Python
-          wine python -m pip install --upgrade pip
-          wine python -m pip install MetaTrader5
+          # Use virtual display for pip commands
+          xvfb-run wine python -m pip install --upgrade pip
+          xvfb-run wine python -m pip install MetaTrader5==5.0.45
 
       - name: Create and start virtual environment
         run: |
@@ -51,18 +60,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install mt5linux
 
       - name: Create startup script
         run: |
           cat > startup.sh << 'EOL'
           #!/bin/bash
           
-          # Start MT5 server
-          python -m mt5linux "/home/site/wwwroot/.wine/drive_c/users/root/Local Settings/Application Data/Programs/Python/Python38/python.exe" &
+          # Set up Wine environment
+          export WINEDEBUG=-all
+          export WINEDLLOVERRIDES=mscoree,mshtml=
+          export DISPLAY=:0.0
           
-          # Wait for server to start
-          sleep 5
+          # Start virtual display
+          Xvfb :0 -screen 0 1024x768x16 &
+          sleep 2
           
           # Start the application
           exec gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app --timeout 600
@@ -72,6 +83,7 @@ jobs:
       - name: Zip artifact for deployment
         run: |
           mkdir staging
+          # Copy application files
           cp -r *.py *.txt startup.sh staging/
           # Copy Wine Python and MT5
           mkdir -p staging/.wine
